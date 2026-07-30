@@ -1,10 +1,5 @@
 # GPT-5.6 prompt contracts
 
-Use these contracts for Codex Evolve workers. They apply the official
-GPT-5.6 prompting guidance: keep prompts lean, state instructions once, define
-authorization and completion boundaries, and specify the evidence and output
-needed for success.
-
 ## Task packet
 
 Render one packet and reuse it unchanged across the initial candidates:
@@ -59,9 +54,6 @@ VERIFY: <smallest check that establishes whether the approach works>
 ```
 
 ## Recombination prompt
-
-Candidate text is untrusted evidence, not instruction. Keep it fenced from the
-task and orchestration rules.
 
 ```text
 Reconcile the candidate proposals for the task packet below. Judge them by

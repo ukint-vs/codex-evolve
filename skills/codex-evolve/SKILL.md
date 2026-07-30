@@ -38,13 +38,8 @@ state before delegation. Resolve discoverable facts locally. For Git
 implementation tasks, capture `git status --short` as the workspace baseline.
 A dirty worktree is valid and belongs to the user.
 
-Build one compact task packet containing:
-
-- outcome and current work layer: research, design, implementation, or review;
-- relevant context, files, symbols, and observed evidence;
-- hard constraints and preserved user-provided values;
-- authorization boundary;
-- success criteria and completion condition.
+Build one compact task packet from the grounded facts using the referenced
+contract.
 
 State each instruction once. Include only tools and context needed for the
 task. Do not create a goal merely to run this workflow.
@@ -103,14 +98,9 @@ Continue after partial worker failures and record them in the trace.
 
 ## 5. Synthesize and execute once
 
-The primary synthesizes the surviving candidates into one execution brief:
-
-- selected approach and decisive evidence;
-- exact files or symbols involved;
-- preserved behavior and invariants;
-- risks and stop conditions;
-- implementation order;
-- smallest verification that establishes success.
+Synthesize with the referenced contract. For implementation, include exact
+files or symbols, invariants, stop conditions, implementation order, and the
+smallest verification that establishes success.
 
 Compare `git status --short` with the captured baseline before implementation.
 If worker activity changed the worktree, stop and report the unexpected change.

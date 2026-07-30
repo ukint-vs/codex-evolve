@@ -30,8 +30,46 @@ $codex-evolve choose and implement the safest architecture
 $codex-evolve --thorough design the next quantization experiment
 ```
 
-Workers remain read-only. For an authorized change task, the primary thread is
-the only writer and runs the final validation.
+## Options
+
+```text
+$codex-evolve [--fast | --thorough] [--n N] [--k K] [--m M] [--t T] <task>
+```
+
+| Mode | Candidates `N` | Group size `K` | Groups `M` | Loops `T` | Maximum worker calls |
+|---|---:|---:|---:|---:|---:|
+| `--fast` | 3 | 2 | 1 | 1 | 4 |
+| default | 4 | 3 | 2 | 2 | 8 |
+| `--thorough` | 6 | 3 | 3 | 3 | 15 |
+
+| Option | Meaning | Range |
+|---|---|---:|
+| `--n` | Independent strong-model candidates | 2–24 |
+| `--k` | Candidates in each recombination group | 2–8 |
+| `--m` | Groups recombined per evolution loop | 1–12 |
+| `--t` | Maximum evolution loops | 1–12 |
+
+Explicit numeric options override the selected preset regardless of argument
+order. Presets cannot be combined. Unknown flags, missing values, and values
+outside their ranges fail before workers start.
+
+The worker-call upper bound is `N + M*T`. Consensus groups require no
+recombination call, and evolution stops early when all surviving candidates
+converge, so actual usage can be lower.
+
+Routing is fixed:
+
+| Group disagreement | Route |
+|---|---|
+| One decision cluster | Keep the central candidate; no worker call |
+| Ratio `≤ 0.5` | `gpt-5.6-terra`, low reasoning |
+| Ratio `> 0.5` and `< 0.8` | `gpt-5.6-terra`, high reasoning |
+| Ratio `≥ 0.8` | `gpt-5.6-sol`, high reasoning |
+
+Candidate workers are always read-only. For tasks that explicitly request a
+change, build, or fix, the primary Codex thread implements and validates the
+selected approach. Analysis, diagnosis, review, and planning tasks remain
+answer-only.
 
 ## Structure
 
