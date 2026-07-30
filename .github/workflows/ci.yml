@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [18.3.0, 22.x]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+      - run: node -e 'for (const f of [".agents/plugins/marketplace.json", "plugins/codex-evolve/.codex-plugin/plugin.json"]) JSON.parse(require("node:fs").readFileSync(f))'
+      - run: node --check plugins/codex-evolve/skills/codex-evolve/scripts/evolve.mjs
+      - run: node --test tests/evolve.test.mjs

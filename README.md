@@ -14,7 +14,7 @@ controls grouping, routing, population updates, and usage accounting.
 ## Requirements
 
 - Codex CLI installed and authenticated
-- Node.js 18 or newer
+- Node.js 18.3 or newer
 
 No API server, Python runtime, MCP server, or separate API key is required.
 
@@ -27,7 +27,7 @@ codex plugin marketplace add ukint-vs/codex-evolve --ref main
 codex plugin add codex-evolve@codex-evolve
 ```
 
-To pin this release candidate, replace `main` with `v0.2.0-rc.1`.
+To pin this release candidate, replace `main` with `v0.2.0-rc.2`.
 
 ### Skill only
 
@@ -80,16 +80,24 @@ $codex-evolve [preset] [population options] [routing options] [model options] <t
 | `--strong` | Strong model override | `gpt-5.6-sol` |
 | `--mid` | Mid model override | `gpt-5.6-terra` |
 | `--cheap` | Cheap model override | `gpt-5.6-terra` |
+| `--timeout` | Per-worker timeout in seconds | 600; range 30–3600 |
 | `--update` | Population update rule | `elitist`, `replace`, or `accumulate` |
 
 Explicit numeric options override the selected preset regardless of argument
 order. Presets cannot be combined. Invalid or unknown options fail before
 workers start.
 
+The runner also accepts `--cwd DIRECTORY` (supplied by the skill) and
+`-h`/`--help`.
+
 The worker-call upper bound is `N + M*T`. Consensus groups require no
 recombination call, and evolution stops early after convergence. The seed makes
 grouping and routing reproducible for identical candidate data; model outputs
 remain stochastic.
+
+Groups contain at most `K` unique candidates. If an update leaves fewer than
+`K` candidates, the group shrinks instead of duplicating members and biasing
+the disagreement ratio.
 
 ## Routing and updates
 
@@ -112,7 +120,9 @@ Update rules:
 Every worker runs through `codex exec --ephemeral --ignore-user-config
 --sandbox read-only` with a strict JSON schema. The primary thread captures the
 worktree baseline, synthesizes the finalists, and performs at most one
-authorized implementation.
+authorized implementation. The runner reports worker starts and completions,
+prints a heartbeat every 30 seconds, times out stalled workers, and cancels all
+remaining work on SIGINT or SIGTERM.
 
 ## Algorithm fidelity
 
@@ -135,6 +145,7 @@ accuracy, cost, or throughput results.
 ## Structure
 
 ```text
+.github/workflows/ci.yml
 .agents/plugins/marketplace.json
 plugins/codex-evolve/
 ├── .codex-plugin/plugin.json

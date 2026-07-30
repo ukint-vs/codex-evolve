@@ -5,7 +5,7 @@ import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseArgs as parseNodeArgs } from "node:util";
+import * as nodeUtil from "node:util";
 
 export const PRESETS = {
   fast: { n: 3, k: 2, m: 1, t: 1 },
@@ -84,10 +84,13 @@ const CLI_OPTIONS = {
   strong: { type: "string" },
   mid: { type: "string" },
   cheap: { type: "string" },
+  timeout: { type: "string" },
   update: { type: "string" },
   cwd: { type: "string" },
 };
 const MAX_CAPTURE_BYTES = 16 * 1024 * 1024;
+const DEFAULT_TIMEOUT_SECONDS = 600;
+const PROGRESS_INTERVAL_MS = 30_000;
 const activeChildren = new Set();
 
 export class EvolutionError extends Error {
@@ -121,9 +124,12 @@ function parseFloatOption(name, raw, min, max) {
 }
 
 export function parseArgs(argv) {
+  if (typeof nodeUtil.parseArgs !== "function") {
+    throw new EvolutionError("Codex Evolve requires Node.js 18.3 or newer");
+  }
   let values;
   try {
-    ({ values } = parseNodeArgs({
+    ({ values } = nodeUtil.parseArgs({
       args: argv,
       options: CLI_OPTIONS,
       allowPositionals: false,
@@ -142,6 +148,7 @@ export function parseArgs(argv) {
     threshold: 0.8,
     low: 0.5,
     high: 0.8,
+    timeout: DEFAULT_TIMEOUT_SECONDS,
     update: "elitist",
     cwd: process.cwd(),
   };
@@ -162,6 +169,9 @@ export function parseArgs(argv) {
   }
   if (values.high !== undefined) {
     params.high = parseFloatOption("--high", values.high, 0.11, 0.99);
+  }
+  if (values.timeout !== undefined) {
+    params.timeout = parseInteger("--timeout", values.timeout, 30, 3600);
   }
   for (const key of ["seed", "strong", "mid", "cheap"]) {
     if (values[key] !== undefined && !values[key].trim()) {
@@ -275,7 +285,7 @@ export function makeRng(seed) {
 function normalizeText(value) {
   return String(value ?? "")
     .toLowerCase()
-    .replace(/[^a-z0-9\s]+/g, " ")
+    .replace(/[^\p{L}\p{N}\s]+/gu, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -374,11 +384,12 @@ export function seededShuffle(values, rng) {
 export function formGroups(indices, count, size, rng) {
   if (!indices.length) throw new EvolutionError("cannot group an empty population");
   const shuffled = seededShuffle(indices, rng);
+  const groupSize = Math.min(size, shuffled.length);
   const groups = [];
   let cursor = 0;
   for (let group = 0; group < count; group += 1) {
     const members = [];
-    for (let index = 0; index < size; index += 1) {
+    for (let index = 0; index < groupSize; index += 1) {
       members.push(shuffled[cursor % shuffled.length]);
       cursor += 1;
     }
@@ -561,6 +572,7 @@ function emptyUsage() {
 }
 
 function addUsage(target, source = {}) {
+  source ??= {};
   target.inputTokens += Number(source.inputTokens ?? source.input_tokens ?? 0);
   target.cachedInputTokens += Number(
     source.cachedInputTokens ?? source.cached_input_tokens ?? 0,
@@ -621,7 +633,9 @@ export async function runCodexWorker({
   effort,
   cwd,
   schemaPath,
+  signal,
 }) {
+  throwIfAborted(signal);
   return new Promise((resolveWorker, rejectWorker) => {
     const args = [
       "exec",
@@ -651,17 +665,19 @@ export async function runCodexWorker({
     let stdout = "";
     let stderr = "";
     let settled = false;
+    let abortHandler;
 
     const finish = (callback) => {
       if (settled) return;
       settled = true;
       activeChildren.delete(child);
+      if (abortHandler) signal?.removeEventListener("abort", abortHandler);
       callback();
     };
     const append = (current, chunk) => {
       const next = current + chunk;
       if (next.length > MAX_CAPTURE_BYTES) {
-        child.kill();
+        terminateChild(child);
         throw new EvolutionError("worker output exceeded 16 MiB");
       }
       return next;
@@ -717,17 +733,29 @@ export async function runCodexWorker({
       });
     });
     child.stdin.on("error", () => {});
+    abortHandler = () => {
+      finish(() => {
+        terminateChild(child);
+        rejectWorker(interruptedError());
+      });
+    };
+    if (signal?.aborted) {
+      abortHandler();
+      return;
+    }
+    signal?.addEventListener("abort", abortHandler, { once: true });
     child.stdin.end(prompt);
   });
 }
 
-export async function mapLimit(items, limit, mapper) {
+export async function mapLimit(items, limit, mapper, signal) {
   const results = new Array(items.length);
   let cursor = 0;
   const workers = Array.from(
     { length: Math.min(limit, Math.max(items.length, 1)) },
     async () => {
       while (cursor < items.length) {
+        throwIfAborted(signal);
         const index = cursor;
         cursor += 1;
         results[index] = await mapper(items[index], index);
@@ -735,6 +763,7 @@ export async function mapLimit(items, limit, mapper) {
     },
   );
   await Promise.all(workers);
+  throwIfAborted(signal);
   return results;
 }
 
@@ -747,15 +776,74 @@ function errorText(error) {
   return String(error?.message ?? error).replace(/\s+/g, " ").trim();
 }
 
-async function safeWorker(runWorker, input, usage) {
+function interruptedError() {
+  return new EvolutionError("interrupted");
+}
+
+function throwIfAborted(signal) {
+  if (signal?.aborted) throw interruptedError();
+}
+
+async function safeWorker(
+  runWorker,
+  input,
+  usage,
+  { signal, timeoutMs, log },
+) {
+  throwIfAborted(signal);
   usage.calls += 1;
+  const startedAt = Date.now();
+  const controller = new AbortController();
+  let rejectStop;
+  let timedOut = false;
+  const stop = new Promise((_, reject) => {
+    rejectStop = reject;
+  });
+  const abort = () => {
+    controller.abort();
+    rejectStop(interruptedError());
+  };
+  signal?.addEventListener("abort", abort, { once: true });
+  if (signal?.aborted) abort();
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+    rejectStop(
+      new EvolutionError(
+        `worker timed out after ${Math.round(timeoutMs / 1000)} seconds`,
+      ),
+    );
+  }, timeoutMs);
+  const progress = setInterval(() => {
+    log(
+      `Waiting ${input.label}: ${Math.round((Date.now() - startedAt) / 1000)}s`,
+    );
+  }, PROGRESS_INTERVAL_MS);
+  progress.unref();
+  log(`Start ${input.label} @ ${input.model}/${input.effort}`);
   try {
-    const result = await runWorker(input);
+    const result = await Promise.race([
+      runWorker({ ...input, signal: controller.signal }),
+      stop,
+    ]);
     addUsage(usage, result.usage);
-    return { ok: true, candidate: validateCandidate(result.candidate) };
+    const candidate = validateCandidate(result.candidate);
+    log(`Done ${input.label}: ${Math.round((Date.now() - startedAt) / 1000)}s`);
+    return { ok: true, candidate };
   } catch (error) {
-    addUsage(usage, error.usage);
-    return { ok: false, error: errorText(error) };
+    if (signal?.aborted) throw interruptedError();
+    const failure = timedOut
+      ? new EvolutionError(
+          `worker timed out after ${Math.round(timeoutMs / 1000)} seconds`,
+        )
+      : error;
+    addUsage(usage, failure?.usage);
+    log(`Failed ${input.label}: ${errorText(failure)}`);
+    return { ok: false, error: errorText(failure) };
+  } finally {
+    clearTimeout(timeout);
+    clearInterval(progress);
+    signal?.removeEventListener("abort", abort);
   }
 }
 
@@ -764,7 +852,9 @@ export async function runEvolution({
   params,
   runWorker,
   log = () => {},
+  signal,
 }) {
+  throwIfAborted(signal);
   const packet = validateTaskPacket(task);
   const taskPacket = renderTaskPacket(packet);
   const seedSource = params.seed ?? packet.outcome;
@@ -788,7 +878,13 @@ export async function runEvolution({
           label: `init:${index + 1}`,
         },
         usage,
+        {
+          signal,
+          timeoutMs: params.timeout * 1000,
+          log,
+        },
       ),
+    signal,
   );
   let population = initResults
     .filter((result) => result.ok)
@@ -809,6 +905,7 @@ export async function runEvolution({
   const loops = [];
   let converged = false;
   for (let loop = 1; loop <= params.t; loop += 1) {
+    throwIfAborted(signal);
     const diversityBefore = clusterIndices(
       population.map((candidate) => candidate.decision),
       params.threshold,
@@ -858,23 +955,33 @@ export async function runEvolution({
       }
     }
 
-    const recombined = await mapLimit(llmPlans, 4, ({ plan, index }) => {
-      const profile = params.profiles[plan.profile];
-      return safeWorker(
-        runWorker,
-        {
-          prompt: recombinationPrompt(
-            taskPacket,
-            plan.members.map((index) => population[index]),
-            plan.route,
-          ),
-          ...profile,
-          cwd: params.cwd,
-          label: `loop${loop}:group${index + 1}:${plan.route}`,
-        },
-        usage,
-      );
-    });
+    const recombined = await mapLimit(
+      llmPlans,
+      4,
+      ({ plan, index }) => {
+        const profile = params.profiles[plan.profile];
+        return safeWorker(
+          runWorker,
+          {
+            prompt: recombinationPrompt(
+              taskPacket,
+              plan.members.map((index) => population[index]),
+              plan.route,
+            ),
+            ...profile,
+            cwd: params.cwd,
+            label: `loop${loop}:group${index + 1}:${plan.route}`,
+          },
+          usage,
+          {
+            signal,
+            timeoutMs: params.timeout * 1000,
+            log,
+          },
+        );
+      },
+      signal,
+    );
     for (let index = 0; index < llmPlans.length; index += 1) {
       const { plan } = llmPlans[index];
       const result = recombined[index];
@@ -946,6 +1053,7 @@ export async function runEvolution({
       threshold: params.threshold,
       low: params.low,
       high: params.high,
+      timeout: params.timeout,
       update: params.update,
       seed: seedSource,
       seedHash,
@@ -977,8 +1085,10 @@ Options:
   --seed STRING
   --threshold 0.5..0.98  --low 0.1..0.9  --high LOW..0.99
   --strong MODEL  --mid MODEL  --cheap MODEL
+  --timeout 30..3600
   --update elitist|replace|accumulate
-  --cwd DIRECTORY`;
+  --cwd DIRECTORY
+  -h, --help`;
 }
 
 async function readStdin() {
@@ -1007,18 +1117,35 @@ function checkCodex() {
   }
 }
 
+function terminateChild(child) {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  child.kill("SIGTERM");
+  const force = setTimeout(() => {
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill("SIGKILL");
+    }
+  }, 5_000);
+  force.unref();
+  child.once("close", () => clearTimeout(force));
+}
+
 function terminateChildren() {
-  for (const child of activeChildren) child.kill();
+  for (const child of activeChildren) terminateChild(child);
+}
+
+function assertSupportedNode() {
+  const [major, minor] = process.versions.node.split(".").map(Number);
+  if (major < 18 || (major === 18 && minor < 3)) {
+    throw new EvolutionError("Codex Evolve requires Node.js 18.3 or newer");
+  }
 }
 
 export async function main(argv = process.argv.slice(2)) {
+  assertSupportedNode();
   const { help, params } = parseArgs(argv);
   if (help) {
     process.stdout.write(`${helpText()}\n`);
     return;
-  }
-  if (Number(process.versions.node.split(".")[0]) < 18) {
-    throw new EvolutionError("Codex Evolve requires Node.js 18 or newer");
   }
   checkCodex();
   const cwdStat = await stat(params.cwd).catch(() => null);
@@ -1029,9 +1156,9 @@ export async function main(argv = process.argv.slice(2)) {
   const task = await readStdin();
   const temporaryDirectory = await mkdtemp(join(tmpdir(), "codex-evolve-"));
   const schemaPath = join(temporaryDirectory, "candidate.schema.json");
-  let interrupted = false;
+  const controller = new AbortController();
   const interrupt = () => {
-    interrupted = true;
+    controller.abort();
     terminateChildren();
   };
   process.once("SIGINT", interrupt);
@@ -1044,8 +1171,9 @@ export async function main(argv = process.argv.slice(2)) {
       params,
       runWorker: (input) => runCodexWorker({ ...input, schemaPath }),
       log: (message) => process.stderr.write(`[codex-evolve] ${message}\n`),
+      signal: controller.signal,
     });
-    if (interrupted) throw new EvolutionError("interrupted");
+    throwIfAborted(controller.signal);
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   } finally {
     process.removeListener("SIGINT", interrupt);

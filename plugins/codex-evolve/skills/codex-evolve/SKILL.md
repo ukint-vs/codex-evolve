@@ -29,6 +29,7 @@ Pass these recognized options to the runner:
 - `--seed <string>`;
 - `--threshold 0.5..0.98`, `--low 0.1..0.9`, `--high <value greater than low, at most 0.99>`;
 - `--strong <model>`, `--mid <model>`, `--cheap <model>`;
+- `--timeout <seconds from 30 through 3600>`;
 - `--update elitist|replace|accumulate`.
 
 Apply a preset first, then explicit overrides regardless of order. Reject
@@ -58,7 +59,7 @@ Authorization boundary:
 
 ## 3. Run the orchestrator
 
-Require Node.js 18 or newer and an authenticated `codex` executable on `PATH`.
+Require Node.js 18.3 or newer and an authenticated `codex` executable on `PATH`.
 If a prerequisite or the runner fails, report its error and stop. Never fall
 back silently to an instruction-driven evolution loop.
 
@@ -75,8 +76,8 @@ one JSON result to stdout.
 
 The runner handles seeded grouping, structured worker output, lexical decision
 clustering, model routing, concurrency, partial worker failures, population
-updates, token accounting, and temporary-file cleanup. Do not reproduce those
-steps in the primary thread.
+updates, worker timeouts, progress heartbeats, cancellation, token accounting,
+and temporary-file cleanup. Do not reproduce those steps in the primary thread.
 
 ## 4. Synthesize and execute once
 
@@ -107,7 +108,7 @@ Loop <n>: diversity <before>→<after> | <routes>; <failures if any>
 Synthesis: primary @ <model/effort when known>
 Execution: primary single-writer | answer-only
 Usage: <calls> calls · <input>/<cached>/<output>/<reasoning> tokens · <lite> lite
-Params: N=<N> K=<K> M=<M> T=<T> seed=<seed> update=<mode>
+Params: N=<N> K=<K> M=<M> T=<T> seed=<seed> update=<mode> timeout=<seconds>s
 Notes: <convergence or partial failures>
 ```
 

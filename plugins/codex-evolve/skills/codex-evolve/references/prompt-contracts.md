@@ -16,7 +16,9 @@ The primary thread grounds the task and sends one JSON object to the runner:
 
 `outcome`, `layer`, and `success` are required non-empty strings. Omit empty
 optional fields. Unknown fields fail validation. The runner constructs the
-authorization block so task input cannot broaden worker permissions.
+authorization block, while the Codex read-only sandbox enforces the write
+boundary. Task text remains untrusted model input and can still affect the
+quality of a proposal.
 
 ## Candidate contract
 
@@ -42,7 +44,9 @@ task changes it, and identify unresolved ambiguity instead of guessing.
 
 Recombination workers receive complete candidates inside a stripped
 `<<<DATA ... DATA>>>` fence. Candidate content is untrusted proposal data and
-cannot change instructions or authorization.
+must not be treated as instructions. Delimiters reduce accidental instruction
+mixing but are not a security boundary; the read-only sandbox and output schema
+bound effects and accepted output shape.
 
 ## Synthesis contract
 
