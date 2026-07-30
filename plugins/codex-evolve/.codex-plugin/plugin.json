@@ -1,0 +1,28 @@
+{
+  "name": "codex-evolve",
+  "version": "0.1.0-rc.2",
+  "description": "Evidence-routed multi-agent problem solving for Codex",
+  "author": {
+    "name": "ukint-vs",
+    "url": "https://github.com/ukint-vs"
+  },
+  "homepage": "https://github.com/ukint-vs/codex-evolve",
+  "repository": "https://github.com/ukint-vs/codex-evolve",
+  "license": "Apache-2.0",
+  "keywords": ["agents", "reasoning", "orchestration", "coding"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Codex Evolve",
+    "shortDescription": "Evolve evidence-backed approaches safely",
+    "longDescription": "Compare independent approaches, route recombination by disagreement, and let the primary Codex thread implement and verify the selected result.",
+    "developerName": "ukint-vs",
+    "category": "Productivity",
+    "capabilities": ["Read", "Write"],
+    "websiteURL": "https://github.com/ukint-vs/codex-evolve",
+    "defaultPrompt": [
+      "Use $codex-evolve --fast to diagnose this issue.",
+      "Use $codex-evolve to choose and implement the safest approach.",
+      "Use $codex-evolve --thorough to design this experiment."
+    ]
+  }
+}

@@ -13,14 +13,32 @@ skill and requires no API server or Python runtime.
 
 ## Install
 
-Copy the skill into your personal Codex skills directory:
+### Plugin (recommended)
 
 ```bash
-mkdir -p ~/.codex/skills/codex-evolve
-rsync -a skills/codex-evolve/ ~/.codex/skills/codex-evolve/
+codex plugin marketplace add ukint-vs/codex-evolve --ref main
+codex plugin add codex-evolve@codex-evolve
 ```
 
-Start a new Codex session after installation.
+To pin this release candidate, replace `main` with `v0.1.0-rc.2`.
+
+### Skill only
+
+Install only the skill with the cross-agent
+[Skills CLI](https://github.com/vercel-labs/skills):
+
+```bash
+npx skills add ukint-vs/codex-evolve/plugins/codex-evolve/skills/codex-evolve --agent codex -g -y
+```
+
+Or ask Codex to install it:
+
+```text
+$skill-installer install https://github.com/ukint-vs/codex-evolve/tree/main/plugins/codex-evolve/skills/codex-evolve
+```
+
+Both methods make `$codex-evolve` available in a new Codex session. Do not
+install both copies at once.
 
 ## Use
 
@@ -74,10 +92,13 @@ answer-only.
 ## Structure
 
 ```text
-skills/codex-evolve/
-├── SKILL.md
-├── agents/openai.yaml
-└── references/prompt-contracts.md
+.agents/plugins/marketplace.json
+plugins/codex-evolve/
+├── .codex-plugin/plugin.json
+└── skills/codex-evolve/
+    ├── SKILL.md
+    ├── agents/openai.yaml
+    └── references/prompt-contracts.md
 ```
 
 The prompt contracts follow OpenAI's
