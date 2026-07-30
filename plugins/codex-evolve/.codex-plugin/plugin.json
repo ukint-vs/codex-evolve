@@ -1,7 +1,7 @@
 {
   "name": "codex-evolve",
-  "version": "0.1.0",
-  "description": "Evidence-routed multi-agent problem solving for Codex",
+  "version": "0.2.0-rc.1",
+  "description": "Deterministic diversity-routed problem solving for Codex",
   "author": {
     "name": "ukint-vs",
     "url": "https://github.com/ukint-vs"
@@ -14,7 +14,7 @@
   "interface": {
     "displayName": "Codex Evolve",
     "shortDescription": "Evolve evidence-backed approaches safely",
-    "longDescription": "Compare independent approaches, route recombination by disagreement, and let the primary Codex thread implement and verify the selected result.",
+    "longDescription": "Run independent read-only Codex workers through a seeded diversity router, then let the primary thread implement and verify the selected result.",
     "developerName": "ukint-vs",
     "category": "Productivity",
     "capabilities": ["Read", "Write"],

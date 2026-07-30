@@ -1,15 +1,22 @@
 # Codex Evolve
 
-Evidence-routed multi-agent problem solving for Codex.
+Deterministic, diversity-routed problem solving for Codex.
 
 > Codex Evolve is an independent Codex-native adaptation inspired by
 > [Squeeze-Evolve](https://github.com/squeeze-evolve/squeeze-evolve). It is not
 > affiliated with or endorsed by the Squeeze-Evolve maintainers.
 
-Codex Evolve asks independent read-only workers to propose solutions, routes
-recombination according to their disagreement, and lets the primary Codex
-thread implement the surviving approach once. It is packaged as a local Codex
-skill and requires no API server or Python runtime.
+Codex Evolve launches independent read-only Codex workers, clusters their
+structured decisions, routes recombination according to disagreement, and lets
+the primary thread implement the surviving approach once. A bundled Node runner
+controls grouping, routing, population updates, and usage accounting.
+
+## Requirements
+
+- Codex CLI installed and authenticated
+- Node.js 18 or newer
+
+No API server, Python runtime, MCP server, or separate API key is required.
 
 ## Install
 
@@ -20,7 +27,7 @@ codex plugin marketplace add ukint-vs/codex-evolve --ref main
 codex plugin add codex-evolve@codex-evolve
 ```
 
-To pin the first stable release, replace `main` with `v0.1.0`.
+To pin this release candidate, replace `main` with `v0.2.0-rc.1`.
 
 ### Skill only
 
@@ -44,14 +51,14 @@ install both copies at once.
 
 ```text
 $codex-evolve --fast diagnose this failing test
-$codex-evolve choose and implement the safest architecture
-$codex-evolve --thorough design the next quantization experiment
+$codex-evolve --seed cache-v1 choose and implement the safest caching strategy
+$codex-evolve --thorough --update accumulate design the next quantization experiment
 ```
 
 ## Options
 
 ```text
-$codex-evolve [--fast | --thorough] [--n N] [--k K] [--m M] [--t T] <task>
+$codex-evolve [preset] [population options] [routing options] [model options] <task>
 ```
 
 | Mode | Candidates `N` | Group size `K` | Groups `M` | Loops `T` | Maximum worker calls |
@@ -60,34 +67,70 @@ $codex-evolve [--fast | --thorough] [--n N] [--k K] [--m M] [--t T] <task>
 | default | 4 | 3 | 2 | 2 | 8 |
 | `--thorough` | 6 | 3 | 3 | 3 | 15 |
 
-| Option | Meaning | Range |
-|---|---|---:|
+| Option | Meaning | Default or range |
+|---|---|---|
 | `--n` | Independent strong-model candidates | 2–24 |
-| `--k` | Candidates in each recombination group | 2–8 |
-| `--m` | Groups recombined per evolution loop | 1–12 |
+| `--k` | Candidates in each group | 2–8 |
+| `--m` | Groups per evolution loop | 1–12 |
 | `--t` | Maximum evolution loops | 1–12 |
+| `--seed` | Reproducible grouping seed | task text |
+| `--threshold` | Decision similarity cutoff | 0.8; range 0.5–0.98 |
+| `--low` | Cheap-route disagreement cutoff | 0.5; range 0.1–0.9 |
+| `--high` | Strong-route disagreement cutoff | 0.8; greater than low, at most 0.99 |
+| `--strong` | Strong model override | `gpt-5.6-sol` |
+| `--mid` | Mid model override | `gpt-5.6-terra` |
+| `--cheap` | Cheap model override | `gpt-5.6-terra` |
+| `--update` | Population update rule | `elitist`, `replace`, or `accumulate` |
 
 Explicit numeric options override the selected preset regardless of argument
-order. Presets cannot be combined. Unknown flags, missing values, and values
-outside their ranges fail before workers start.
+order. Presets cannot be combined. Invalid or unknown options fail before
+workers start.
 
 The worker-call upper bound is `N + M*T`. Consensus groups require no
-recombination call, and evolution stops early when all surviving candidates
-converge, so actual usage can be lower.
+recombination call, and evolution stops early after convergence. The seed makes
+grouping and routing reproducible for identical candidate data; model outputs
+remain stochastic.
 
-Routing is fixed:
+## Routing and updates
 
 | Group disagreement | Route |
 |---|---|
 | One decision cluster | Keep the central candidate; no worker call |
-| Ratio `≤ 0.5` | `gpt-5.6-terra`, low reasoning |
-| Ratio `> 0.5` and `< 0.8` | `gpt-5.6-terra`, high reasoning |
-| Ratio `≥ 0.8` | `gpt-5.6-sol`, high reasoning |
+| Ratio `≤ low` | cheap model, low reasoning |
+| Ratio `> low` and `< high` | mid model, high reasoning |
+| Ratio `≥ high` | strong model, high reasoning |
 
-Candidate workers are always read-only. For tasks that explicitly request a
-change, build, or fix, the primary Codex thread implements and validates the
-selected approach. Analysis, diagnosis, review, and planning tasks remain
-answer-only.
+Update rules:
+
+- `elitist` (default): merge parents and children, keep supported cluster
+  representatives, and cap the population at `N`;
+- `replace`: replace parents with valid children, retaining parents only when
+  every child fails;
+- `accumulate`: retain the growing pool during evolution and select at most `N`
+  representative finalists.
+
+Every worker runs through `codex exec --ephemeral --ignore-user-config
+--sandbox read-only` with a strict JSON schema. The primary thread captures the
+worktree baseline, synthesizes the finalists, and performs at most one
+authorized implementation.
+
+## Algorithm fidelity
+
+| Capability | Codex Evolve |
+|---|---|
+| Strong-model initialization | Implemented |
+| Seeded uniform grouping | Implemented |
+| Diversity fitness | Implemented with decision-text similarity |
+| Lite consensus aggregation | Implemented with a medoid pick |
+| Cheap/mid/strong recombination | Implemented with GPT-5.6 profiles |
+| Replace and accumulate updates | Implemented |
+| Token-level group confidence | Not available from Codex worker output |
+| Fitness-weighted selection | Deferred until a scalar confidence signal exists |
+| Latency-matched GPU pools | Outside the local Codex plugin runtime |
+
+The paper explicitly permits answer diversity when token log probabilities are
+unavailable. Codex Evolve does not claim reproduction of the paper's benchmark,
+accuracy, cost, or throughput results.
 
 ## Structure
 
@@ -98,25 +141,32 @@ plugins/codex-evolve/
 └── skills/codex-evolve/
     ├── SKILL.md
     ├── agents/openai.yaml
-    └── references/prompt-contracts.md
+    ├── references/prompt-contracts.md
+    └── scripts/evolve.mjs
+tests/evolve.test.mjs
 ```
 
-The prompt contracts follow OpenAI's
+Run the deterministic checks with:
+
+```bash
+node --test tests/evolve.test.mjs
+```
+
+The prompts follow OpenAI's
 [GPT-5.6 prompting best practices](https://developers.openai.com/api/docs/guides/latest-model?model=gpt-5.6#prompting-best-practices):
-lean task context, one authorization boundary, explicit success criteria, and
-evidence-backed verification.
+lean task context, one authorization boundary, explicit success criteria,
+structured output, and evidence-backed verification.
 
 ## Relationship to Squeeze-Evolve
 
 [Squeeze-Evolve](https://github.com/squeeze-evolve/squeeze-evolve) introduced
-the evolutionary inference pattern that inspired this project: sample strong
-candidates, measure answer diversity, and route recombination to an appropriate
-model tier.
+the evolutionary inference pattern used here: strong initialization, fitness
+signals, selection, routed recombination, and population updates.
 
-Codex Evolve reimplements that idea around Codex skills, local repository
-inspection, read-only subagents, and a primary-thread single-writer rule. It is
-not configuration-compatible with the upstream Python, NVIDIA Dynamo, or
-Claude Code implementations.
+Codex Evolve adapts that pattern to repository inspection, local Codex
+workers, diversity routing, and a primary-thread single-writer rule. It is not
+configuration-compatible with the upstream Python, NVIDIA Dynamo, or Claude
+Code implementations.
 
 ## License
 

@@ -5,3 +5,7 @@ https://github.com/squeeze-evolve/squeeze-evolve
 
 Squeeze-Evolve is distributed under the Apache License 2.0. Codex Evolve is
 not affiliated with or endorsed by the Squeeze-Evolve maintainers.
+
+The deterministic grouping, text-similarity, clustering, and routing logic in
+plugins/codex-evolve/skills/codex-evolve/scripts/evolve.mjs is adapted from the
+Squeeze-Evolve Claude Code workflow and modified for Codex structured workers.
