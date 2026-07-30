@@ -1,6 +1,6 @@
 {
   "name": "codex-evolve",
-  "version": "0.1.0-rc.2",
+  "version": "0.1.0",
   "description": "Evidence-routed multi-agent problem solving for Codex",
   "author": {
     "name": "ukint-vs",

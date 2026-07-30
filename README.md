@@ -20,7 +20,7 @@ codex plugin marketplace add ukint-vs/codex-evolve --ref main
 codex plugin add codex-evolve@codex-evolve
 ```
 
-To pin this release candidate, replace `main` with `v0.1.0-rc.2`.
+To pin the first stable release, replace `main` with `v0.1.0`.
 
 ### Skill only
 
