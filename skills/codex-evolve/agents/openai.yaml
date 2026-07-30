@@ -1,0 +1,7 @@
+interface:
+  display_name: "Codex Evolve"
+  short_description: "Evolve evidence-backed approaches safely"
+  default_prompt: "Use $codex-evolve to compare independent approaches, synthesize the strongest one, and complete this task safely."
+
+policy:
+  allow_implicit_invocation: false
