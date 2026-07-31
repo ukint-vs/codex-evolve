@@ -1,6 +1,6 @@
 {
   "name": "codex-evolve",
-  "version": "0.2.0-rc.2",
+  "version": "0.2.0",
   "description": "Deterministic diversity-routed problem solving for Codex",
   "author": {
     "name": "ukint-vs",
@@ -19,10 +19,6 @@
     "category": "Productivity",
     "capabilities": ["Read", "Write"],
     "websiteURL": "https://github.com/ukint-vs/codex-evolve",
-    "defaultPrompt": [
-      "Use $codex-evolve --fast to diagnose this issue.",
-      "Use $codex-evolve to choose and implement the safest approach.",
-      "Use $codex-evolve --thorough to design this experiment."
-    ]
+    "defaultPrompt": "Use $codex-evolve to compare independent approaches, synthesize the strongest one, and complete this task safely."
   }
 }

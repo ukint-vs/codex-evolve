@@ -27,7 +27,7 @@ codex plugin marketplace add ukint-vs/codex-evolve --ref main
 codex plugin add codex-evolve@codex-evolve
 ```
 
-To pin this release candidate, replace `main` with `v0.2.0-rc.2`.
+To pin this release, replace `main` with `v0.2.0`.
 
 ### Skill only
 
@@ -79,7 +79,7 @@ $codex-evolve [preset] [population options] [routing options] [model options] <t
 | `--high` | Strong-route disagreement cutoff | 0.8; greater than low, at most 0.99 |
 | `--strong` | Strong model override | `gpt-5.6-sol` |
 | `--mid` | Mid model override | `gpt-5.6-terra` |
-| `--cheap` | Cheap model override | `gpt-5.6-terra` |
+| `--cheap` | Cheap model override | `gpt-5.6-luna` |
 | `--timeout` | Per-worker timeout in seconds | 600; range 30–3600 |
 | `--update` | Population update rule | `elitist`, `replace`, or `accumulate` |
 
@@ -104,9 +104,9 @@ the disagreement ratio.
 | Group disagreement | Route |
 |---|---|
 | One decision cluster | Keep the central candidate; no worker call |
-| Ratio `≤ low` | cheap model, low reasoning |
-| Ratio `> low` and `< high` | mid model, high reasoning |
-| Ratio `≥ high` | strong model, high reasoning |
+| Ratio `≤ low` | cheap profile (Luna by default), extra-high reasoning |
+| Ratio `> low` and `< high` | mid profile (Terra by default), high reasoning |
+| Ratio `≥ high` | strong profile (Sol by default), high reasoning |
 
 Update rules:
 
@@ -151,6 +151,8 @@ plugins/codex-evolve/
 ├── .codex-plugin/plugin.json
 └── skills/codex-evolve/
     ├── SKILL.md
+    ├── LICENSE
+    ├── NOTICE
     ├── agents/openai.yaml
     ├── references/prompt-contracts.md
     └── scripts/evolve.mjs
@@ -181,4 +183,5 @@ Code implementations.
 
 ## License
 
-Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE). Both files are
+also bundled with the plugin skill for plugin and skill-only installations.

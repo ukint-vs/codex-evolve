@@ -50,7 +50,7 @@ const ANGLES = [
 const PROFILE_DEFAULTS = {
   strong: { model: "gpt-5.6-sol", effort: "high" },
   mid: { model: "gpt-5.6-terra", effort: "high" },
-  cheap: { model: "gpt-5.6-terra", effort: "low" },
+  cheap: { model: "gpt-5.6-luna", effort: "xhigh" },
 };
 
 const TASK_KEYS = new Set([

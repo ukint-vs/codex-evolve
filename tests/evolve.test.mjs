@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import test from "node:test";
@@ -35,6 +43,32 @@ const runnerPath = fileURLToPath(
     import.meta.url,
   ),
 );
+const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
+
+test("stable release package metadata is self-contained", async () => {
+  const pluginRoot = join(repositoryRoot, "plugins", "codex-evolve");
+  const skillRoot = join(pluginRoot, "skills", "codex-evolve");
+  const manifest = JSON.parse(
+    await readFile(join(pluginRoot, ".codex-plugin", "plugin.json")),
+  );
+  const marketplace = JSON.parse(
+    await readFile(join(repositoryRoot, ".agents", "plugins", "marketplace.json")),
+  );
+  const readme = await readFile(join(repositoryRoot, "README.md"), "utf8");
+
+  assert.equal(manifest.version, "0.2.0");
+  assert.equal(typeof manifest.interface.defaultPrompt, "string");
+  assert.ok(manifest.interface.defaultPrompt);
+  assert.equal(marketplace.plugins[0].name, manifest.name);
+  assert.equal(marketplace.plugins[0].source.path, "./plugins/codex-evolve");
+  assert.doesNotMatch(readme, /0\.2\.0-rc|release candidate/i);
+  for (const file of ["LICENSE", "NOTICE"]) {
+    assert.equal(
+      await readFile(join(skillRoot, file), "utf8"),
+      await readFile(join(repositoryRoot, file), "utf8"),
+    );
+  }
+});
 
 function waitForClose(child, timeout = 3_000) {
   return new Promise((resolve, reject) => {
@@ -61,6 +95,14 @@ test("arguments preserve presets and apply explicit overrides regardless of orde
   assert.throws(() => parseArgs(["--high", "0.4"]), /greater than --low/);
   assert.throws(() => parseArgs(["--timeout", "29"]), /between 30 and 3600/);
   assert.throws(() => parseArgs(["--unknown"]), /unknown option/i);
+});
+
+test("default model profiles preserve quality, balanced, and cheap roles", () => {
+  assert.deepEqual(parseArgs([]).params.profiles, {
+    strong: { model: "gpt-5.6-sol", effort: "high" },
+    mid: { model: "gpt-5.6-terra", effort: "high" },
+    cheap: { model: "gpt-5.6-luna", effort: "xhigh" },
+  });
 });
 
 test("task and candidate trust boundaries reject malformed data", () => {
