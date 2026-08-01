@@ -29,7 +29,11 @@ Pass these recognized options to the runner:
 - `--seed <string>`;
 - `--threshold 0.5..0.98`, `--low 0.1..0.9`, `--high <value greater than low, at most 0.99>`;
 - `--strong <model>`, `--mid <model>`, `--cheap <model>`;
+- `--init cheap|mid|strong`;
+- `--strong-effort`, `--mid-effort`, `--cheap-effort` with value
+  `low|medium|high|xhigh|max` (Ultra may delegate and is not allowed);
 - `--timeout <seconds from 30 through 3600>`;
+- `--timeout-extensions <integer from 0 through 3>`;
 - `--update elitist|replace|accumulate`.
 
 Apply a preset first, then explicit overrides regardless of order. Reject
@@ -107,8 +111,8 @@ Init: <survived>/<N> candidates @ <model>/<effort>
 Loop <n>: diversity <before>→<after> | <routes>; <failures if any>
 Synthesis: primary @ <model/effort when known>
 Execution: primary single-writer | answer-only
-Usage: <calls> calls · <input>/<cached>/<output>/<reasoning> tokens · <lite> lite
-Params: N=<N> K=<K> M=<M> T=<T> seed=<seed> update=<mode> timeout=<seconds>s
+Usage: <calls> calls · <input>/<cached>/<output>/<reasoning> tokens · <lite> lite · <extensions> extensions
+Params: N=<N> K=<K> M=<M> T=<T> init=<profile> seed=<seed> update=<mode> timeout=<seconds>s extensions=<count>
 Notes: <convergence or partial failures>
 ```
 

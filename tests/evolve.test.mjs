@@ -56,12 +56,13 @@ test("stable release package metadata is self-contained", async () => {
   );
   const readme = await readFile(join(repositoryRoot, "README.md"), "utf8");
 
-  assert.equal(manifest.version, "0.2.0");
+  assert.equal(manifest.version, "0.3.0");
   assert.equal(typeof manifest.interface.defaultPrompt, "string");
   assert.ok(manifest.interface.defaultPrompt);
   assert.equal(marketplace.plugins[0].name, manifest.name);
   assert.equal(marketplace.plugins[0].source.path, "./plugins/codex-evolve");
-  assert.doesNotMatch(readme, /0\.2\.0-rc|release candidate/i);
+  assert.ok(readme.includes(`replace \`main\` with \`v${manifest.version}\``));
+  assert.doesNotMatch(readme, /0\.3\.0-rc|release candidate/i);
   for (const file of ["LICENSE", "NOTICE"]) {
     assert.equal(
       await readFile(join(skillRoot, file), "utf8"),
@@ -89,20 +90,57 @@ test("arguments preserve presets and apply explicit overrides regardless of orde
   assert.equal(first.n, 5);
   assert.equal(first.k, 2);
   assert.equal(first.timeout, 600);
+  assert.equal(first.timeoutExtensions, 1);
   assert.deepEqual(first, second);
   assert.equal(parseArgs(["--timeout", "30"]).params.timeout, 30);
+  assert.equal(
+    parseArgs(["--timeout-extensions", "0"]).params.timeoutExtensions,
+    0,
+  );
   assert.throws(() => parseArgs(["--fast", "--thorough"]), /cannot be combined/);
   assert.throws(() => parseArgs(["--high", "0.4"]), /greater than --low/);
   assert.throws(() => parseArgs(["--timeout", "29"]), /between 30 and 3600/);
+  assert.throws(
+    () => parseArgs(["--timeout-extensions", "4"]),
+    /between 0 and 3/,
+  );
   assert.throws(() => parseArgs(["--unknown"]), /unknown option/i);
 });
 
 test("default model profiles preserve quality, balanced, and cheap roles", () => {
-  assert.deepEqual(parseArgs([]).params.profiles, {
+  const params = parseArgs([]).params;
+  assert.equal(params.init, "strong");
+  assert.deepEqual(params.profiles, {
     strong: { model: "gpt-5.6-sol", effort: "high" },
     mid: { model: "gpt-5.6-terra", effort: "high" },
     cheap: { model: "gpt-5.6-luna", effort: "xhigh" },
   });
+  assert.equal(
+    parseArgs(["--strong-effort", "max"]).params.profiles.strong.effort,
+    "max",
+  );
+  const custom = parseArgs([
+    "--init",
+    "mid",
+    "--cheap",
+    "local-luna",
+    "--cheap-effort",
+    "max",
+  ]).params;
+  assert.equal(custom.init, "mid");
+  assert.deepEqual(custom.profiles.cheap, {
+    model: "local-luna",
+    effort: "max",
+  });
+  assert.throws(
+    () => parseArgs(["--strong-effort", "ultra"]),
+    /low, medium, high, xhigh, or max/,
+  );
+  assert.throws(() => parseArgs(["--init", "other"]), /cheap, mid, or strong/);
+  assert.throws(
+    () => parseArgs(["--cheap-effort", "extreme"]),
+    /low, medium, high, xhigh, or max/,
+  );
 });
 
 test("task and candidate trust boundaries reject malformed data", () => {
@@ -213,7 +251,7 @@ test("mapLimit never exceeds its concurrency bound", async () => {
   assert.equal(peak, 2);
 });
 
-test("stalled workers time out and report a bounded failure", async () => {
+test("stalled workers exhaust extensions and report a bounded failure", async () => {
   let aborted = 0;
   const logs = [];
   const params = parseArgs([
@@ -227,6 +265,7 @@ test("stalled workers time out and report a bounded failure", async () => {
     "1",
   ]).params;
   params.timeout = 0.02;
+  params.timeoutExtensions = 2;
 
   await assert.rejects(
     runEvolution({
@@ -246,18 +285,26 @@ test("stalled workers time out and report a bounded failure", async () => {
             },
             { once: true },
           );
-        }),
+      }),
       log: (message) => logs.push(message),
     }),
-    /all initialization workers failed:.*timed out/,
+    (error) => {
+      assert.match(
+        error.message,
+        /all initialization workers failed:.*timed out/,
+      );
+      assert.equal(error.usage.extensions, 4);
+      return true;
+    },
   );
   assert.equal(aborted, 2);
+  assert.ok(logs.some((message) => message.startsWith("Extend init:1")));
   assert.ok(logs.some((message) => message.startsWith("Failed init:1")));
 });
 
-test("cancellation stops evolution before another worker stage starts", async () => {
-  const controller = new AbortController();
+test("timeout extensions keep the same workers alive", async () => {
   const labels = [];
+  const logs = [];
   const params = parseArgs([
     "--n",
     "2",
@@ -268,6 +315,45 @@ test("cancellation stops evolution before another worker stage starts", async ()
     "--t",
     "1",
   ]).params;
+  params.timeout = 0.02;
+
+  const result = await runEvolution({
+    task: {
+      outcome: "choose a cache",
+      layer: "design",
+      success: "one proposal",
+    },
+    params,
+    runWorker: async ({ label }) => {
+      labels.push(label);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      return { candidate: candidate("sqlite"), usage: {} };
+    },
+    log: (message) => logs.push(message),
+  });
+
+  assert.deepEqual(labels, ["init:1", "init:2"]);
+  assert.equal(result.trace.usage.calls, 2);
+  assert.equal(result.trace.usage.extensions, 2);
+  assert.ok(logs.some((message) => message.startsWith("Extend init:1")));
+  assert.ok(logs.some((message) => message.startsWith("Extend init:2")));
+});
+
+test("cancellation stops evolution before another worker stage starts", async () => {
+  const controller = new AbortController();
+  const labels = [];
+  let extended = false;
+  const params = parseArgs([
+    "--n",
+    "2",
+    "--k",
+    "2",
+    "--m",
+    "1",
+    "--t",
+    "1",
+  ]).params;
+  params.timeout = 0.01;
   const evolution = runEvolution({
     task: {
       outcome: "choose a cache",
@@ -287,11 +373,119 @@ test("cancellation stops evolution before another worker stage starts", async ()
         });
       });
     },
+    log: (message) => {
+      if (message.startsWith("Extend init:2")) {
+        extended = true;
+        controller.abort();
+      }
+    },
   });
-  setTimeout(() => controller.abort(), 10);
 
   await assert.rejects(evolution, /interrupted/);
+  assert.equal(extended, true);
   assert.deepEqual(labels.sort(), ["init:1", "init:2"]);
+});
+
+test("help documents model and timeout controls", async () => {
+  const child = spawn(process.execPath, [runnerPath, "--help"]);
+  let stdout = "";
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => {
+    stdout += chunk;
+  });
+  assert.deepEqual(await waitForClose(child), { code: 0, signal: null });
+  assert.match(stdout, /--init cheap\|mid\|strong/);
+  assert.match(stdout, /--strong-effort LEVEL/);
+  assert.match(stdout, /--timeout-extensions 0\.\.3/);
+});
+
+test("low and medium disagreement use their configured profiles", async () => {
+  for (const expected of [
+    {
+      thresholds: ["--low", "0.7", "--high", "0.9"],
+      route: "low",
+      model: "gpt-5.6-luna",
+      effort: "xhigh",
+    },
+    {
+      thresholds: [],
+      route: "medium",
+      model: "gpt-5.6-terra",
+      effort: "high",
+    },
+  ]) {
+    const invocations = [];
+    const params = parseArgs([
+      "--n",
+      "3",
+      "--k",
+      "3",
+      "--m",
+      "1",
+      "--t",
+      "1",
+      ...expected.thresholds,
+    ]).params;
+    await runEvolution({
+      task: {
+        outcome: "choose a cache",
+        layer: "design",
+        success: "one proposal",
+      },
+      params,
+      runWorker: async ({ label, model, effort }) => {
+        invocations.push({ label, model, effort });
+        return {
+          candidate: candidate(label === "init:3" ? "redis" : "sqlite"),
+          usage: {},
+        };
+      },
+    });
+    assert.deepEqual(invocations.at(-1), {
+      label: `loop1:group1:${expected.route}`,
+      model: expected.model,
+      effort: expected.effort,
+    });
+  }
+});
+
+test("a recombination timeout retains parents and records the failure", async () => {
+  const params = parseArgs([
+    "--n",
+    "2",
+    "--k",
+    "2",
+    "--m",
+    "1",
+    "--t",
+    "1",
+  ]).params;
+  params.timeout = 0.01;
+  params.timeoutExtensions = 0;
+  const result = await runEvolution({
+    task: {
+      outcome: "choose a cache",
+      layer: "design",
+      success: "one proposal",
+    },
+    params,
+    runWorker: ({ label, signal }) => {
+      if (label.startsWith("init")) {
+        return Promise.resolve({
+          candidate: candidate(label === "init:1" ? "sqlite" : "redis"),
+          usage: {},
+        });
+      }
+      return new Promise((_, reject) => {
+        signal.addEventListener("abort", () => reject(new Error("aborted")), {
+          once: true,
+        });
+      });
+    },
+  });
+  assert.equal(result.trace.loops[0].groups[0].status, "failed");
+  assert.match(result.trace.loops[0].groups[0].error, /timed out/);
+  assert.ok(result.trace.notes.includes("loop 1: no valid children; retained parents"));
 });
 
 test("the CLI subprocess path succeeds, cleans up, and exits 130 on SIGINT", async () => {
@@ -405,6 +599,8 @@ if (process.env.FAKE_CODEX_MODE === "hang") {
 
 test("evolution routes workers, tolerates a partial failure, and emits usage", async () => {
   let calls = 0;
+  let firstPrompt;
+  let recombinationPrompt;
   const invocations = [];
   const result = await runEvolution({
     task: {
@@ -422,13 +618,17 @@ test("evolution routes workers, tolerates a partial failure, and emits usage", a
         "1",
         "--t",
         "1",
+        "--init",
+        "cheap",
         "--seed",
         "fixture",
       ]).params,
       cwd: process.cwd(),
     },
-    runWorker: async ({ label, model, effort }) => {
+    runWorker: async ({ label, model, effort, prompt }) => {
       calls += 1;
+      firstPrompt ??= prompt;
+      if (label.startsWith("loop")) recombinationPrompt = prompt;
       invocations.push({ label, model, effort });
       if (label === "init:2") throw new Error("fixture failure");
       return {
@@ -451,6 +651,8 @@ test("evolution routes workers, tolerates a partial failure, and emits usage", a
   });
   assert.equal(result.schemaVersion, 1);
   assert.equal(result.trace.init.survived, 2);
+  assert.equal(result.trace.init.model, "gpt-5.6-luna");
+  assert.equal(result.trace.init.effort, "xhigh");
   assert.equal(result.trace.init.failures.length, 1);
   assert.equal(result.trace.usage.calls, calls);
   assert.equal(result.trace.usage.inputTokens, (calls - 1) * 10);
@@ -458,7 +660,10 @@ test("evolution routes workers, tolerates a partial failure, and emits usage", a
   assert.ok(result.population.length >= 1);
   assert.deepEqual(
     invocations.slice(0, 3).map(({ model, effort }) => ({ model, effort })),
-    Array(3).fill({ model: "gpt-5.6-sol", effort: "high" }),
+    Array(3).fill({ model: "gpt-5.6-luna", effort: "xhigh" }),
+  );
+  assert.ok(
+    firstPrompt.indexOf("<task>") < firstPrompt.indexOf("Decision angle:"),
   );
   assert.deepEqual(
     invocations.at(-1),
@@ -467,5 +672,9 @@ test("evolution routes workers, tolerates a partial failure, and emits usage", a
       model: "gpt-5.6-sol",
       effort: "high",
     },
+  );
+  assert.ok(
+    recombinationPrompt.indexOf("<task>") <
+      recombinationPrompt.indexOf("Routing guidance:"),
   );
 });

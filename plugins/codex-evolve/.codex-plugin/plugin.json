@@ -1,6 +1,6 @@
 {
   "name": "codex-evolve",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Deterministic diversity-routed problem solving for Codex",
   "author": {
     "name": "ukint-vs",

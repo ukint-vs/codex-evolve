@@ -69,6 +69,14 @@ const CANDIDATE_KEYS = new Set([
 ]);
 const LAYERS = new Set(["research", "design", "implementation", "review"]);
 const UPDATE_MODES = new Set(["elitist", "replace", "accumulate"]);
+const PROFILE_NAMES = new Set(Object.keys(PROFILE_DEFAULTS));
+const REASONING_EFFORTS = new Set([
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+]);
 const CLI_OPTIONS = {
   help: { type: "boolean", short: "h" },
   fast: { type: "boolean" },
@@ -84,7 +92,12 @@ const CLI_OPTIONS = {
   strong: { type: "string" },
   mid: { type: "string" },
   cheap: { type: "string" },
+  init: { type: "string" },
+  "strong-effort": { type: "string" },
+  "mid-effort": { type: "string" },
+  "cheap-effort": { type: "string" },
   timeout: { type: "string" },
+  "timeout-extensions": { type: "string" },
   update: { type: "string" },
   cwd: { type: "string" },
 };
@@ -149,7 +162,9 @@ export function parseArgs(argv) {
     low: 0.5,
     high: 0.8,
     timeout: DEFAULT_TIMEOUT_SECONDS,
+    timeoutExtensions: 1,
     update: "elitist",
+    init: "strong",
     cwd: process.cwd(),
   };
   if (values.n !== undefined) params.n = parseInteger("--n", values.n, 2, 24);
@@ -173,6 +188,14 @@ export function parseArgs(argv) {
   if (values.timeout !== undefined) {
     params.timeout = parseInteger("--timeout", values.timeout, 30, 3600);
   }
+  if (values["timeout-extensions"] !== undefined) {
+    params.timeoutExtensions = parseInteger(
+      "--timeout-extensions",
+      values["timeout-extensions"],
+      0,
+      3,
+    );
+  }
   for (const key of ["seed", "strong", "mid", "cheap"]) {
     if (values[key] !== undefined && !values[key].trim()) {
       throw new EvolutionError(`--${key} cannot be empty`);
@@ -185,16 +208,29 @@ export function parseArgs(argv) {
     }
     params.update = values.update;
   }
+  if (values.init !== undefined) {
+    if (!PROFILE_NAMES.has(values.init)) {
+      throw new EvolutionError("--init must be cheap, mid, or strong");
+    }
+    params.init = values.init;
+  }
   if (values.cwd !== undefined) params.cwd = resolve(values.cwd);
   if (params.high <= params.low) {
     throw new EvolutionError("--high must be greater than --low");
   }
 
-  params.profiles = {
-    strong: { ...PROFILE_DEFAULTS.strong, model: params.strong ?? PROFILE_DEFAULTS.strong.model },
-    mid: { ...PROFILE_DEFAULTS.mid, model: params.mid ?? PROFILE_DEFAULTS.mid.model },
-    cheap: { ...PROFILE_DEFAULTS.cheap, model: params.cheap ?? PROFILE_DEFAULTS.cheap.model },
-  };
+  params.profiles = Object.fromEntries(
+    Object.entries(PROFILE_DEFAULTS).map(([name, profile]) => {
+      const effort = values[`${name}-effort`] ?? profile.effort;
+      if (!REASONING_EFFORTS.has(effort)) {
+        throw new EvolutionError(
+          `--${name}-effort must be low, medium, high, xhigh, or max`,
+        );
+      }
+      const model = params[name] ?? profile.model;
+      return [name, { model, effort }];
+    }),
+  );
   delete params.strong;
   delete params.mid;
   delete params.cheap;
@@ -521,9 +557,11 @@ function candidatePrompt(taskPacket, index) {
 Inspect relevant repository evidence before deciding. Prefer the smallest
 approach that satisfies every success criterion. Preserve existing behavior
 unless the task explicitly changes it. Identify unresolved ambiguity as risk
-instead of guessing. ${ANGLES[index % ANGLES.length]}
+instead of guessing.
 
 ${taskPacket}
+
+Decision angle: ${ANGLES[index % ANGLES.length]}
 
 Return only the JSON object required by the supplied schema. Use a short stable
 decision identifier. Every evidence item must be observed or clearly marked as
@@ -547,9 +585,11 @@ function recombinationPrompt(taskPacket, candidates, route) {
     )
     .join("\n");
   return `Reconcile candidate proposals for the task packet below. Judge them
-against repository evidence and success criteria, not vote count. ${guidance}
+against repository evidence and success criteria, not vote count.
 
 ${taskPacket}
+
+Routing guidance: ${guidance}
 
 <candidate_set>
 ${candidateSet}
@@ -564,6 +604,7 @@ function emptyUsage() {
   return {
     calls: 0,
     lite: 0,
+    extensions: 0,
     inputTokens: 0,
     cachedInputTokens: 0,
     outputTokens: 0,
@@ -788,7 +829,7 @@ async function safeWorker(
   runWorker,
   input,
   usage,
-  { signal, timeoutMs, log },
+  { signal, timeoutMs, timeoutExtensions = 0, log },
 ) {
   throwIfAborted(signal);
   usage.calls += 1;
@@ -796,6 +837,9 @@ async function safeWorker(
   const controller = new AbortController();
   let rejectStop;
   let timedOut = false;
+  let extensionsUsed = 0;
+  let timeout;
+  const hardTimeoutMs = timeoutMs * (timeoutExtensions + 1);
   const stop = new Promise((_, reject) => {
     rejectStop = reject;
   });
@@ -805,15 +849,25 @@ async function safeWorker(
   };
   signal?.addEventListener("abort", abort, { once: true });
   if (signal?.aborted) abort();
-  const timeout = setTimeout(() => {
+  const onTimeout = () => {
+    if (extensionsUsed < timeoutExtensions) {
+      extensionsUsed += 1;
+      usage.extensions += 1;
+      log(
+        `Extend ${input.label}: ${Math.round(timeoutMs / 1000)}s grace ${extensionsUsed}/${timeoutExtensions}`,
+      );
+      timeout = setTimeout(onTimeout, timeoutMs);
+      return;
+    }
     timedOut = true;
     controller.abort();
     rejectStop(
       new EvolutionError(
-        `worker timed out after ${Math.round(timeoutMs / 1000)} seconds`,
+        `worker timed out after ${Math.round(hardTimeoutMs / 1000)} seconds`,
       ),
     );
-  }, timeoutMs);
+  };
+  timeout = setTimeout(onTimeout, timeoutMs);
   const progress = setInterval(() => {
     log(
       `Waiting ${input.label}: ${Math.round((Date.now() - startedAt) / 1000)}s`,
@@ -834,7 +888,7 @@ async function safeWorker(
     if (signal?.aborted) throw interruptedError();
     const failure = timedOut
       ? new EvolutionError(
-          `worker timed out after ${Math.round(timeoutMs / 1000)} seconds`,
+          `worker timed out after ${Math.round(hardTimeoutMs / 1000)} seconds`,
         )
       : error;
     addUsage(usage, failure?.usage);
@@ -864,7 +918,8 @@ export async function runEvolution({
   let nextId = 0;
   const wrap = (candidate) => ({ ...candidate, _id: `c${(nextId += 1)}` });
 
-  log(`Init: ${params.n} candidates @ ${params.profiles.strong.model}`);
+  const initProfile = params.profiles[params.init];
+  log(`Init: ${params.n} candidates @ ${initProfile.model}`);
   const initResults = await mapLimit(
     Array.from({ length: params.n }, (_, index) => index),
     4,
@@ -873,7 +928,7 @@ export async function runEvolution({
         runWorker,
         {
           prompt: candidatePrompt(taskPacket, index),
-          ...params.profiles.strong,
+          ...initProfile,
           cwd: params.cwd,
           label: `init:${index + 1}`,
         },
@@ -881,6 +936,7 @@ export async function runEvolution({
         {
           signal,
           timeoutMs: params.timeout * 1000,
+          timeoutExtensions: params.timeoutExtensions,
           log,
         },
       ),
@@ -976,6 +1032,7 @@ export async function runEvolution({
           {
             signal,
             timeoutMs: params.timeout * 1000,
+            timeoutExtensions: params.timeoutExtensions,
             log,
           },
         );
@@ -1054,7 +1111,9 @@ export async function runEvolution({
       low: params.low,
       high: params.high,
       timeout: params.timeout,
+      timeoutExtensions: params.timeoutExtensions,
       update: params.update,
+      init: params.init,
       seed: seedSource,
       seedHash,
       profiles: params.profiles,
@@ -1064,8 +1123,8 @@ export async function runEvolution({
       init: {
         requested: params.n,
         survived: initResults.length - initFailures.length,
-        model: params.profiles.strong.model,
-        effort: params.profiles.strong.effort,
+        model: initProfile.model,
+        effort: initProfile.effort,
         failures: initFailures,
       },
       loops,
@@ -1084,8 +1143,11 @@ Options:
   --n 2..24  --k 2..8  --m 1..12  --t 1..12
   --seed STRING
   --threshold 0.5..0.98  --low 0.1..0.9  --high LOW..0.99
+  --init cheap|mid|strong
   --strong MODEL  --mid MODEL  --cheap MODEL
+  --strong-effort LEVEL  --mid-effort LEVEL  --cheap-effort LEVEL
   --timeout 30..3600
+  --timeout-extensions 0..3
   --update elitist|replace|accumulate
   --cwd DIRECTORY
   -h, --help`;

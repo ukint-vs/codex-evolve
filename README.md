@@ -27,7 +27,7 @@ codex plugin marketplace add ukint-vs/codex-evolve --ref main
 codex plugin add codex-evolve@codex-evolve
 ```
 
-To pin this release, replace `main` with `v0.2.0`.
+To pin this release, replace `main` with `v0.3.0`.
 
 ### Skill only
 
@@ -69,7 +69,7 @@ $codex-evolve [preset] [population options] [routing options] [model options] <t
 
 | Option | Meaning | Default or range |
 |---|---|---|
-| `--n` | Independent strong-model candidates | 2–24 |
+| `--n` | Independent initial candidates | 2–24 |
 | `--k` | Candidates in each group | 2–8 |
 | `--m` | Groups per evolution loop | 1–12 |
 | `--t` | Maximum evolution loops | 1–12 |
@@ -80,12 +80,22 @@ $codex-evolve [preset] [population options] [routing options] [model options] <t
 | `--strong` | Strong model override | `gpt-5.6-sol` |
 | `--mid` | Mid model override | `gpt-5.6-terra` |
 | `--cheap` | Cheap model override | `gpt-5.6-luna` |
-| `--timeout` | Per-worker timeout in seconds | 600; range 30–3600 |
+| `--init` | Initial candidate profile | `cheap`, `mid`, or `strong`; default `strong` |
+| `--strong-effort` | Strong-profile reasoning | `low`, `medium`, `high`, `xhigh`, or `max`; default `high` |
+| `--mid-effort` | Mid-profile reasoning | Same values; default `high` |
+| `--cheap-effort` | Cheap-profile reasoning | Same values; default `xhigh` |
+| `--timeout` | Per-worker timeout window in seconds | 600; range 30–3600 |
+| `--timeout-extensions` | Extra windows before aborting a live worker | 1; range 0–3 |
 | `--update` | Population update rule | `elitist`, `replace`, or `accumulate` |
 
 Explicit numeric options override the selected preset regardless of argument
 order. Presets cannot be combined. Invalid or unknown options fail before
 workers start.
+
+Ultra is intentionally excluded because it may delegate work, which would
+break Evolve's direct worker boundary and call accounting. At each timeout,
+the runner keeps the same process alive for another window; it does not restart
+the task. The hard limit is `timeout * (timeout-extensions + 1)`.
 
 The runner also accepts `--cwd DIRECTORY` (supplied by the skill) and
 `-h`/`--help`.
@@ -100,6 +110,13 @@ Groups contain at most `K` unique candidates. If an update leaves fewer than
 the disagreement ratio.
 
 ## Routing and updates
+
+Initial candidates use Sol at high reasoning by default because Evolve targets
+difficult tasks and cannot observe whether an implementation later stalls. Use
+`--init cheap` to start with Luna at extra-high reasoning when cost or latency
+matters more. During
+recombination, Luna handles low disagreement, Terra handles medium disagreement,
+and Sol handles high disagreement.
 
 | Group disagreement | Route |
 |---|---|
@@ -124,11 +141,16 @@ authorized implementation. The runner reports worker starts and completions,
 prints a heartbeat every 30 seconds, times out stalled workers, and cancels all
 remaining work on SIGINT or SIGTERM.
 
+Worker prompts put the shared task packet before per-candidate variation so
+repeated calls can benefit from provider prompt-cache reads. Workers remain
+ephemeral to preserve independent candidates; Evolve does not create keepalive
+automations or long-lived worker sessions.
+
 ## Algorithm fidelity
 
 | Capability | Codex Evolve |
 |---|---|
-| Strong-model initialization | Implemented |
+| Strong-model initialization | Default; Luna available with `--init cheap` |
 | Seeded uniform grouping | Implemented |
 | Diversity fitness | Implemented with decision-text similarity |
 | Lite consensus aggregation | Implemented with a medoid pick |
